@@ -10,11 +10,30 @@ import {
   verifyRefreshToken,
 } from "../../lib/token.js";
 import { sendEmail } from "../../lib/email.js";
+import { OAuth2Client } from "google-auth-library";
 
 function getAppUrl() {
   return (
     process.env.APP_URL || `http://localhost:${process.env.PORT || 4000}/api`
   );
+}
+
+function getGoogleClient() {
+  const clientId = process.env.OATH_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.OATH_GOOGLE_CLIENT_SECRET;
+  const redirectUrl = process.env.OATH_GOOGLE_REDIRECT_URL;
+
+  if (!clientId || !clientSecret || !redirectUrl) {
+    throw new Error(
+      "Google OAuth credentials are not set in environment variables."
+    );
+  }
+
+  return new OAuth2Client({
+    clientId,
+    clientSecret,
+    redirectUri: redirectUrl,
+  });
 }
 
 export async function registerHandler(req, res) {
@@ -374,6 +393,119 @@ export async function resetPasswordHandler(req, res) {
 
     return res.status(StatusCodes.OK).json({
       message: "Password has been reset successfully!",
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+}
+
+export function getGoogleOAuthHandler(req, res) {
+  try {
+    const client = getGoogleClient();
+
+    const url = client.generateAuthUrl({
+      access_type: "offline",
+      scope: ["openid", "profile", "email"],
+      prompt: "consent",
+    });
+
+    return res.redirect(url);
+  } catch (error) {
+    console.log(error);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      message: "Internal server error.",
+      error: error.message,
+    });
+  }
+}
+
+export async function googleOAuthCallbackHandler(req, res) {
+  try {
+    const code = req.query.code;
+
+    if (!code) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "Authorization code is missing.",
+      });
+    }
+
+    const client = getGoogleClient();
+
+    const { tokens } = await client.getToken(code);
+
+    if (!tokens.id_token) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        message: "ID token is missing in Google's response.",
+      });
+    }
+
+    const ticket = await client.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: process.env.OATH_GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+
+    const email = payload.email.toLowerCase();
+    const emailVerified = payload.email_verified;
+
+    if (!email || !emailVerified) {
+      return res.status(StatusCodes.FORBIDDEN).json({
+        message: "Google account email is not verified.",
+      });
+    }
+
+    const normalizeEmail = email.toLocaleLowerCase().trim();
+    let user = await User.findOne({ email: normalizeEmail });
+
+    if (!user) {
+      const randomPassword = crypto.randomBytes(16).toString("hex");
+      const passwordHash = await hashPassword(randomPassword);
+
+      user = new User({
+        email: normalizeEmail,
+        name: payload.name || "No Name",
+        password: passwordHash,
+        role: "user",
+        isEmailVerified: true,
+      });
+
+      await user.save();
+    } else {
+      if (!user.isEmailVerified) {
+        user.isEmailVerified = true;
+        await user.save();
+      }
+    }
+
+    const accessToken = generateAccessToken(
+      user._id,
+      user.role,
+      user.tokenVersion
+    );
+    const refreshToken = generateRefreshToken(user._id, user.tokenVersion);
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 4 * 24 * 60 * 60 * 1000, // 4 days
+    });
+
+    return res.status(StatusCodes.OK).json({
+      message: "Google Login successful!",
+      accessToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+      },
     });
   } catch (error) {
     console.log(error);

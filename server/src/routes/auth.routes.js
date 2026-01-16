@@ -1,6 +1,8 @@
 import { Router } from "express";
 import {
   forgotPassword,
+  getGoogleOAuthHandler,
+  googleOAuthCallbackHandler,
   loginHandler,
   logoutHandler,
   refreshHandler,
@@ -18,5 +20,7 @@ router.post("/refresh", refreshHandler);
 router.post("/logout", logoutHandler);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPasswordHandler);
+router.get("/google-auth", getGoogleOAuthHandler);
+router.get("/google/callback", googleOAuthCallbackHandler);
 
 export default router;
