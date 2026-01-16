@@ -1,4 +1,4 @@
-const { default: mongoose } = require("mongoose");
+import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
@@ -19,10 +19,21 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: ["user", "admin"],
+      default: "user",
     },
     isEmailVerified: {
       type: Boolean,
       default: false,
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    resetPasswordToken: {
+      type: String,
+    },
+    resetPasswordExpires: {
+      type: Date,
     },
   },
   {
